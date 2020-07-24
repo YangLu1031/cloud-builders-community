@@ -1,0 +1,35 @@
+timeout: 3600s
+substitutions:
+  _TAG: "cloud_build"
+  _VERSION1: "10.0.17763.1282"
+  _VERSION2: "10.0.18363.900"
+  _IMAGE1: "windows-cloud/global/images/windows-server-2019-dc-for-containers-v20191210"
+  _IMAGE2: "windows-cloud/global/images/windows-server-1909-dc-core-for-containers-v20200609"
+steps:
+  - name: 'gcr.io/$PROJECT_ID/windows-builder'
+    args:
+    - --command
+    - 'powershell.exe -file build.ps1 -tag ${_TAG} -version ${_VERSION1}'
+    - --image
+    - '${_IMAGE1}'
+  - name: 'gcr.io/$PROJECT_ID/windows-builder'
+    args:
+    - --command
+    - 'powershell.exe -file build.ps1 -tag ${_TAG} -version ${_VERSION2}'
+    - --image
+    - '${_IMAGE2}'
+  - name: 'gcr.io/cloud-builders/docker'
+    env: ['DOCKER_CLI_EXPERIMENTAL=enabled']
+    args: 
+    - manifest
+    - create
+    - gcr.io/$PROJECT_ID/servercore:${_TAG}
+    - gcr.io/$PROJECT_ID/servercore:${_TAG}_${_VERSION1}
+    - gcr.io/$PROJECT_ID/servercore:${_TAG}_${_VERSION2}
+  - name: 'gcr.io/cloud-builders/docker'
+    env: ['DOCKER_CLI_EXPERIMENTAL=enabled']
+    args: 
+    - manifest
+    - push
+    - gcr.io/$PROJECT_ID/servercore:${_TAG}
+tags: ['cloud-builders-community']
