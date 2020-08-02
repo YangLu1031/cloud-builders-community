@@ -1,6 +1,0 @@
-timeout: 3600s
-steps:
-- name: 'gcr.io/cloud-builders/gcloud'
-  entrypoint: 'bash'
-  args: ['windows-builder/images/multi-arch_1909_2019/build.sh']
-tags: ['cloud-builders-community']

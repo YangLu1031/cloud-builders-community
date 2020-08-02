@@ -1,101 +1,52 @@
-# Google Cloud Build community images
+# Description
+This repository is used to create a GKE Windows builder to build multi-arch containers using Cloud Build.
 
-This repository contains source code for community-contributed Docker images. You can use these images as build steps for
-[Google Cloud Build](https://cloud.google.com/cloud-build/docs/).
+Customized from [cloud-builders-community/windows-builder](https://github.com/GoogleCloudPlatform/cloud-builders-community/tree/master/windows-builder).
 
-These are not official Google products.
+# Maintaining this builder
+Update the `versionMap` in [main.go](builder/main.go) when a new SAC or LTSC version comes out.
+Currently the included versions are 1909 & ltsc2019.
 
-## How to use a community-contributed build step
+# Usage
+Refer to the builder in your project's `cloudbuild.yaml` and provide the target container image name. It'll spin up ephemeral `n1-standard-1` VMs on Compute Engine to build the container. Your Cloud Build workspace is synchronized to `C:\workspace` at server startup.
 
-Google Cloud Build executes a build as a series of build steps. Each build step is run in a Docker container. See
-the [Cloud Build documentation](https://cloud.google.com/cloud-build/docs/overview) for more details
-about builds and build steps.
+```yaml
+steps:
+- name: 'gcr.io/$PROJECT_ID/gke-windows-builder'
+  args: [ '--container-image-name', '<your target container image:tag name>' ]
+```
 
-### Before you begin
+The VM is configured by the builder and then deleted automatically at the end of the build.
 
-1.  Select or create a [Google Cloud project](https://console.cloud.google.com/cloud-resource-manager).
-2.  Enable [billing for your project](https://support.google.com/cloud/answer/6293499#enable-billing).
-3.  Enable [the Cloud Build API](https://console.cloud.google.com/flows/enableapi?apiid=cloudbuild.googleapis.com).
-4.  Install and initialize [the Cloud SDK](https://cloud.google.com/sdk/docs/).
+You can also provide the VPC, Subnetwork, Region, and Zone parameters to specify where to create the VMs:
 
-### Build the build step from source
+```yaml
+steps:
+- name: 'gcr.io/$PROJECT_ID/gke-windows-builder'
+  args: [ '--network', '<network-name>',
+          '--subnetwork', '<subnetwork-name>',
+          '--region', '<region>',
+          '--zone', '<zone>',
+          '--container-image-name', '<your target container image:tag name>' ]
+```
 
-To use a community-contributed Docker image as a build step, you need to download the source code from this
-repo and build the image.
+As the remote copy command provided is very slow if you have a number of files in your workspace, it is also possible to avoid copying the workspace (you can use GCS to copy the workspace instead):
 
-The example below shows how to download and build the image for the `packer` build step on a Linux or Mac OS X workstation:
+```yaml
+steps:
+- name: 'gcr.io/$PROJECT_ID/gke-windows-builder'
+  args: [ '--network', '<network-name>',
+          '--subnetwork', '<subnetwork-name>',
+          '--region', '<region>',
+          '--zone', '<zone>',
+          '--not-copy-workspace',
+          '--container-image-name', '<your target container image:tag name>' ]
+```
 
-1. Clone the `cloud-builders-community` repo:
+Your server must support Basic Authentication (username and password) and your network must allow access from the internet on TCP port 5986.  Do not submit plaintext passwords in your build configuration: instead, use [encrypted credentials](https://cloud.google.com/cloud-build/docs/securing-builds/use-encrypted-secrets-credentials) secured with Cloud KMS.  In addition, you must clear up your workspace directory after use, and take care to manage concurrent builds.
 
-   ```sh
-   $ git clone https://github.com/GoogleCloudPlatform/cloud-builders-community
-   ```
+## Examples
 
-2. Go to the directory that has the source code for the `packer` Docker image:
+Example builds are provided:
 
-   ```sh
-   $ cd cloud-builders-community/packer
-   ```
-
-3. Build the Docker image:
-
-   ```
-   $ gcloud builds submit --config cloudbuild.yaml .
-   ```
-
-4. View the image in Google Container Registry:
-
-   ```sh
-   $ gcloud container images list --filter packer
-   ```
-
-### Use the build step with Cloud Build build
-
-Once you've built the Docker image, you can use it as a build step in a Cloud Build build.
-
-For example, below is the `packer` build step in a YAML
-[config file](https://cloud.google.com/cloud-build/docs/build-config), ready to be used in a Cloud Build build:
-
-   ```yaml
-   - name: 'gcr.io/$PROJECT_ID/packer'
-     args:
-     - build
-     - -var
-     - project_id=$PROJECT_ID
-     - packer.json
-   ```
-
-Each build step's `examples` directory has an example of how you can use the build step. See the
-[example for the `packer` builder](https://github.com/GoogleCloudPlatform/cloud-builders-community/tree/master/packer/examples/gce).
-
-## Contributing
-
-We welcome contributions!  See [CONTRIBUTING](CONTRIBUTING.md) for more information on how to get started.
-Please include a `cloudbuild.yaml` and at least one working example in your
-[pull request](https://help.github.com/articles/about-pull-requests/).
-
-### Contribution Requirements
-
-In order to accept your contribution, it must:
-
-* make clear that the builder image is pushed to the builder's project's registry.
-  E.g., it specifies `images: ['gcr.io/$PROJECT_ID/the-tool']`. The builder will
-  not be pushed to the `gcr.io/cloud-builders` registry.
-* include a simple sanity test in the `cloudbuild.yaml` config that builds and
-  pushes the image. This can be as simple as invoking the tool with `--help`, and
-  it ensures the tool is installed correctly and in the expected location within
-  the image.
-* include some basic example describing how to use it. This helps new users get
-  acquainted with the builder, and helps us ensure the builder continues to work
-  as intended.
-
-## License
-
-This source code is licensed under Apache 2.0. Full license text is available in [LICENSE](LICENSE).
-
-## Support
-
-To file issues and feature requests against these builder images, the usage of these build steps or the Cloud Build API in general, [create an issue in this repo](https://github.com/GoogleCloudPlatform/cloud-builders-community/issues/new).
-
-If you are experiencing an issue with the Cloud Build service or have a feature request, e-mail google-cloud-dev@googlegroups.com or see our [Getting support](https://cloud.google.com/cloud-build/docs/getting-support) documentation.
-
+* [example](example) builds a hello world multi-arch Windows container from servercore 1909 & ltsc2019.
