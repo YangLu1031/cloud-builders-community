@@ -3,46 +3,44 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
-	"os"
 
 	"github.com/GoogleCloudPlatform/cloud-builders-community/windows-builder/builder/builder"
+	"github.com/masterzen/winrm"
 )
 
 var (
-	hostname         = flag.String("hostname", "", "Hostname of remote Windows server")
-	username         = flag.String("username", "", "Username on remote Windows server")
-	password         = flag.String("password", os.Getenv("PASSWORD"), "Password on remote Windows server")
-	command          = flag.String("command", "", "Command to run on remote Windows server")
 	notCopyWorkspace = flag.Bool("not-copy-workspace", false, "If copy workspace or not")
 	workspacePath    = flag.String("workspace-path", "/workspace", "The directory to copy data from")
 	workspaceBucket  = flag.String("workspace-bucket", "", "The bucket to copy the directory to. Defaults to {project-id}_cloudbuild")
-	image            = flag.String("image", "windows-cloud/global/images/windows-server-2019-dc-for-containers-v20191210", "Windows image to start the server from")
 	network          = flag.String("network", "default", "The VPC name to use when creating the Windows server")
 	subnetwork       = flag.String("subnetwork", "default", "The Subnetwork name to use when creating the Windows server")
 	region           = flag.String("region", "us-central1", "The region name to use when creating the Windows server")
 	zone             = flag.String("zone", "us-central1-f", "The zone name to use when creating the Windows server")
+	tag              = flag.String("tag", "gcr.io/yluu-gke-dev/test-win-builder:localbuild", "The resulting container tag name")
+	// Windows version and GCE container image map
+	versionMap = map[string]string{
+		"ltsc2019": "windows-cloud/global/images/windows-server-2019-dc-for-containers-v20191210",
+		"1909":     "windows-cloud/global/images/windows-server-1909-dc-core-for-containers-v20200609",
+	}
 )
 
 func main() {
 	log.Print("Starting Windows builder")
 	flag.Parse()
+	// Construct args of the `docker manifest create` command
+	manifestCmd := *tag
 	var r *builder.Remote
 	var s *builder.Server
 	var bs *builder.BuilderServer
-
-	// Connect to server
-	if (*hostname != "") && (*username != "") && (*password != "") {
-		r = &builder.Remote{
-			Hostname: hostname,
-			Username: username,
-			Password: password,
-		}
-		log.Printf("Connecting to existing host %s", *r.Hostname)
-	} else {
+	step := 0
+	// Bring up specific Windows Build Servers
+	for ver, image := range versionMap {
+		step++
 		ctx := context.Background()
 		bs = &builder.BuilderServer{
-			ImageUrl: image,
+			ImageUrl: &image,
 			VPC:      network,
 			Subnet:   subnetwork,
 			Region:   region,
@@ -50,35 +48,58 @@ func main() {
 		}
 		s = builder.NewServer(ctx, bs)
 		r = &s.Remote
-	}
-	log.Print("Waiting for server to become available")
-	err := r.Wait()
-	if err != nil {
-		log.Fatalf("Error connecting to server: %+v", err)
-	}
 
-	r.BucketName = workspaceBucket
-	// Copy workspace to remote machine
-	if !*notCopyWorkspace {
-		log.Print("Copying workspace")
-		err = r.Copy(*workspacePath)
+		log.Print("Waiting for server to become available")
+		err := r.Wait()
 		if err != nil {
-			log.Fatalf("Error copying workspace: %+v", err)
+			log.Fatalf("Error connecting to server: %+v", err)
 		}
-	}
 
-	// Execute on remote
-	log.Printf("Executing command %s", *command)
-	err = r.Run(*command)
-	if err != nil {
-		log.Fatalf("Error executing command: %+v", err)
-	}
+		r.BucketName = workspaceBucket
+		// Copy workspace to remote machine
+		if !*notCopyWorkspace {
+			log.Print("Copying workspace")
+			err = r.Copy(*workspacePath)
+			if err != nil {
+				log.Fatalf("Error copying workspace: %+v", err)
+			}
+		}
 
-	// Shut down server if started
-	if s != nil {
-		err = s.DeleteInstance(bs)
+		// Build single arch container on remote
+		buildSingleArchContainerScript := fmt.Sprintf(`
+		$env:DOCKER_CLI_EXPERIMENTAL = 'enabled'
+		gcloud --quiet auth configure-docker
+		docker build -t %[1]s_%[2]s --build-arg version=%[2]s .
+		docker push %[1]s_%[2]s
+		`, *tag, ver)
+
+		err = r.Run(winrm.Powershell(buildSingleArchContainerScript))
 		if err != nil {
-			log.Fatalf("Failed to shut down instance: %+v", err)
+			log.Fatalf("Error executing buildSingleArchContainerScript: %+v", err)
+		}
+
+		manifestCmd += fmt.Sprint(" ", *tag, "_", ver)
+		// If it's last step, build multi-arch container on remote
+		if step == len(versionMap) {
+			createMultiarchContainerScript := fmt.Sprintf(`
+			$env:DOCKER_CLI_EXPERIMENTAL = 'enabled'
+			gcloud --quiet auth configure-docker
+			docker manifest create %s
+			docker manifest push %s
+			`, manifestCmd, *tag)
+
+			err = r.Run(winrm.Powershell(createMultiarchContainerScript))
+			if err != nil {
+				log.Fatalf("Error executing createMultiarchContainerScript: %+v", err)
+			}
+		}
+
+		// Shut down server if started
+		if s != nil {
+			err = s.DeleteInstance(bs)
+			if err != nil {
+				log.Fatalf("Failed to shut down instance: %+v", err)
+			}
 		}
 	}
 }
